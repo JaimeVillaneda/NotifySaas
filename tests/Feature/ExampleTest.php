@@ -1,7 +1,7 @@
 <?php
 
-it('redirects guests from the home page to login', function () {
+it('redirects the home page to the Filament panel', function () {
     $response = $this->get('/');
 
-    $response->assertRedirect(route('login'));
+    $response->assertRedirect('/admin');
 });

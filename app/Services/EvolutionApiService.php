@@ -2,17 +2,28 @@
 
 namespace App\Services;
 
-use App\Models\EvolutionSetting;
+use App\Models\CommunicationConnection;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 
 class EvolutionApiService
 {
-    public function sendText(string $phone, string $message, ?EvolutionSetting $setting = null): array
+    /**
+     * Envia un mensaje de texto usando una conexion WhatsApp Evolution API.
+     *
+     * Si no recibe una conexion especifica, usa la ultima conexion WhatsApp
+     * activa registrada en el modulo de Conexiones.
+     *
+     * @return array<string, mixed>
+     */
+    public function sendText(string $phone, string $message, ?CommunicationConnection $connection = null): array
     {
-        $setting ??= EvolutionSetting::where('is_active', true)->latest()->firstOrFail();
+        $connection ??= CommunicationConnection::where('channel', 'whatsapp')
+            ->where('is_enabled', true)
+            ->latest()
+            ->firstOrFail();
 
-        $response = $this->client($setting)->post("/message/sendText/{$setting->instance_name}", [
+        $response = $this->client($connection)->post("/message/sendText/{$connection->instance_name}", [
             'number' => $phone,
             'text' => $message,
         ]);
@@ -20,11 +31,16 @@ class EvolutionApiService
         return $response->throw()->json();
     }
 
-    private function client(EvolutionSetting $setting): PendingRequest
+    /**
+     * Construye el cliente HTTP con URL base, timeouts y API key cifrada.
+     */
+    private function client(CommunicationConnection $connection): PendingRequest
     {
-        return Http::baseUrl(rtrim((string) $setting->base_url, '/'))
+        return Http::baseUrl(rtrim((string) $connection->base_url, '/'))
             ->acceptJson()
             ->asJson()
-            ->withHeaders(['apikey' => $setting->api_key]);
+            ->connectTimeout(5)
+            ->timeout(15)
+            ->withHeaders(['apikey' => $connection->secret]);
     }
 }
