@@ -15,12 +15,13 @@ class PersonForm
     {
         return $schema
             ->components([
-                Select::make('company_id')
-                    ->label('Empresa')
-                    ->options(Company::query()->orderBy('name')->pluck('name', 'id'))
-                    ->searchable()
-                    ->preload()
-                    ->required(),
+Select::make('company_id')
+    ->label('Empresa')
+    ->options(Company::query()->orderBy('name')->pluck('name', 'id'))
+    ->searchable()
+    ->preload()
+    ->required()
+    ->hidden(fn (): bool => auth()->user()?->company_id !== null),
                 TextInput::make('first_name')
                     ->label('Nombre')
                     ->maxLength(255)
