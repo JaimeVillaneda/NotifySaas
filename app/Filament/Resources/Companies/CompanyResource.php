@@ -14,6 +14,7 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use UnitEnum;
+use Illuminate\Database\Eloquent\Builder;
 
 class CompanyResource extends Resource
 {
@@ -36,6 +37,28 @@ class CompanyResource extends Resource
     {
         return CompaniesTable::configure($table);
     }
+    
+/**
+ * Restrict company records to the authenticated company.
+ */
+public static function getEloquentQuery(): Builder
+{
+    $query = parent::getEloquentQuery();
+    $user = auth()->user();
+
+    if (! $user || ! $user->is_admin) {
+        return $query->whereRaw('1 = 0');
+    }
+
+    // The initial platform administrator can access all companies.
+    if ($user->company_id === null) {
+        return $query;
+    }
+
+    // Company administrators can only access their own company.
+    return $query->whereKey($user->company_id);
+}
+
 
     public static function getRelations(): array
     {

@@ -20,7 +20,8 @@ class UserForm
                     ->options(Company::query()->orderBy('name')->pluck('name', 'id'))
                     ->searchable()
                     ->preload()
-                    ->required(),
+                    ->required()
+                    ->hidden(fn (): bool => auth()->user()?->company_id !== null),
                 TextInput::make('name')
                     ->label('Nombre')
                     ->maxLength(255)
