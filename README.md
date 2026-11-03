@@ -273,15 +273,6 @@ La documentación de análisis y la planificación original se mantienen como an
 
 La prueba de concepto de la Nota 1 no debe confundirse con pruebas automatizadas o envíos reales ya comprobados en la aplicación actual.
 
-## 10. Equipo y continuidad
-
-| Integrante | Participación |
-|---|---|
-| **Jaime Andrés Villaneda Uribe** | Desarrolló principalmente la estructura inicial en Laravel y Filament y avanzó en US-01 y US-02. Después canceló el semestre y dejó de participar en el desarrollo. |
-| **Yeison Andrés Jaramillo Carvajal** | Continuó individualmente el proyecto; trabajó en US-03, US-04, pruebas manuales y publicación de los avances en GitHub. |
-
-Tras el retiro de Jaime, la dedicación de Yeison ha sido de **aproximadamente dos horas diarias**, según su disponibilidad. Esta variación en la capacidad del equipo se tendrá en cuenta para planificar las siguientes iteraciones.
-
 ---
 
 **NotifySaaS — Universidad Tecnológica de Pereira — 2026**  
