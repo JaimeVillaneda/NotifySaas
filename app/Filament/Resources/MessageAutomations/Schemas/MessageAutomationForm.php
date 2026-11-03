@@ -21,22 +21,28 @@ class MessageAutomationForm
     {
         return $schema
             ->components([
+
                 Select::make('company_id')
                     ->label('Empresa')
                     ->options(Company::query()->orderBy('name')->pluck('name', 'id'))
                     ->searchable()
                     ->preload()
                     ->live()
-                    ->required(),
+                    ->required()
+                    ->default(fn (): ?int => auth()->user()?->company_id)
+                    ->hidden(fn (): bool => auth()->user()?->company_id !== null),
                 Select::make('message_template_id')
-                    ->label('Plantilla')
-                    ->options(fn ($get) => MessageTemplate::query()
-                        ->when($get('company_id'), fn ($query, $companyId) => $query->where('company_id', $companyId))
-                        ->orderBy('name')
-                        ->pluck('name', 'id'))
-                    ->searchable()
-                    ->preload()
-                    ->required(),
+    ->label('Plantilla')
+    ->options(fn ($get) => MessageTemplate::query()
+        ->where(
+            'company_id',
+            auth()->user()?->company_id ?? $get('company_id')
+        )
+        ->orderBy('name')
+        ->pluck('name', 'id'))
+    ->searchable()
+    ->preload()
+    ->required(),
                 TextInput::make('name')
                     ->label('Nombre')
                     ->maxLength(255)
@@ -52,26 +58,39 @@ class MessageAutomationForm
                     ->required()
                     ->live(),
                 Select::make('communication_connection_id')
-                    ->label('Conexion')
-                    ->options(fn ($get) => CommunicationConnection::query()
-                        ->when($get('company_id'), fn ($query, $companyId) => $query->where('company_id', $companyId))
-                        ->when($get('channel'), fn ($query, $channel) => $query->where('channel', $channel))
-                        ->where('is_enabled', true)
-                        ->orderBy('name')
-                        ->pluck('name', 'id'))
-                    ->searchable()
-                    ->preload(),
+    ->label('Conexion')
+    ->options(fn ($get) => CommunicationConnection::query()
+        ->where(
+            'company_id',
+            auth()->user()?->company_id ?? $get('company_id')
+        )
+        ->when(
+            $get('channel'),
+            fn ($query, $channel) => $query->where('channel', $channel)
+        )
+        ->where('is_enabled', true)
+        ->orderBy('name')
+        ->pluck('name', 'id'))
+    ->searchable()
+    ->preload(),
                 Select::make('person_id')
-                    ->label('Destinatario')
-                    ->helperText('Dejalo vacio para enviar a todos los clientes activos de la empresa.')
-                    ->options(fn ($get) => Person::query()
-                        ->when($get('company_id'), fn ($query, $companyId) => $query->where('company_id', $companyId))
-                        ->where('is_active', true)
-                        ->orderBy('first_name')
-                        ->get()
-                        ->mapWithKeys(fn (Person $person): array => [$person->id => $person->full_name ?: $person->phone]))
-                    ->searchable()
-                    ->preload(),
+    ->label('Destinatario')
+    ->helperText('Dejalo vacio para enviar a todos los clientes activos de la empresa.')
+    ->options(fn ($get) => Person::query()
+        ->where(
+            'company_id',
+            auth()->user()?->company_id ?? $get('company_id')
+        )
+        ->where('is_active', true)
+        ->orderBy('first_name')
+        ->get()
+        ->mapWithKeys(
+            fn (Person $person): array => [
+                $person->id => $person->full_name ?: $person->phone
+            ]
+        ))
+    ->searchable()
+    ->preload(),
                 Select::make('frequency')
                     ->label('Frecuencia')
                     ->options([
