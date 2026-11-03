@@ -2,7 +2,7 @@
 
 Aqui se guardan comandos que se ejecutan por terminal o por el scheduler de Laravel.
 
-Actualmente contiene:
+Actualmente Contiene:
 
 - `ProcessPendingReminders`: busca recordatorios pendientes y crea registros de envio en el historial.
 
