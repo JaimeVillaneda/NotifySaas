@@ -14,6 +14,7 @@ use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
 use UnitEnum;
+use Illuminate\Database\Eloquent\Builder;
 
 class MessageTemplateResource extends Resource
 {
@@ -36,6 +37,29 @@ class MessageTemplateResource extends Resource
     {
         return MessageTemplatesTable::configure($table);
     }
+
+    
+/**
+ * Restrict message templates to the authenticated company.
+ */
+public static function getEloquentQuery(): Builder
+{
+    $query = parent::getEloquentQuery();
+    $user = auth()->user();
+
+    if (! $user || ! $user->is_admin) {
+        return $query->whereRaw('1 = 0');
+    }
+
+    // Temporary platform administrator can view all templates.
+    if ($user->company_id === null) {
+        return $query;
+    }
+
+    // Company administrators can only view their templates.
+    return $query->where('company_id', $user->company_id);
+}
+
 
     public static function getRelations(): array
     {
