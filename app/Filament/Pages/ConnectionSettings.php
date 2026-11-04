@@ -66,7 +66,28 @@ class ConnectionSettings extends Page
                     ->schema([
                         Select::make('company_id')
                             ->label('Empresa')
-                            ->options(Company::query()->orderBy('name')->pluck('name', 'id'))
+                            
+->options(function (): array {
+    $user = auth()->user();
+
+    if (! $user || ! $user->is_admin) {
+        return [];
+    }
+
+    $query = Company::query();
+
+    // Un administrador de empresa solo puede
+    // seleccionar su propia empresa.
+    if ($user->company_id !== null) {
+        $query->whereKey($user->company_id);
+    }
+
+    return $query
+        ->orderBy('name')
+        ->pluck('name', 'id')
+        ->all();
+})
+
                             ->searchable()
                             ->preload()
                             ->live()
@@ -112,23 +133,66 @@ class ConnectionSettings extends Page
     /**
      * Guarda las tres pestanas como una conexion unica por canal y empresa.
      */
-    public function save(): void
-    {
-        $state = $this->form->getState();
-        $companyId = $state['company_id'];
 
-        $this->saveChannel($companyId, 'telegram', $state['telegram'] ?? []);
-        $this->saveChannel($companyId, 'email', $state['email'] ?? []);
-        $this->saveChannel($companyId, 'whatsapp', $state['whatsapp'] ?? []);
+public function save(): void
+{
+    // Identificar al administrador autenticado.
+    $user = auth()->user();
 
-        Notification::make()
-            ->success()
-            ->title('Conexiones guardadas')
-            ->body('La configuracion de Telegram, Email y WhatsApp fue actualizada.')
-            ->send();
+    abort_unless(
+        $user && $user->is_admin,
+        403
+    );
 
-        $this->fillConnectionData();
+    // Obtener los datos del formulario.
+    $state = $this->form->getState();
+
+    $companyId = (int) ($state['company_id'] ?? 0);
+
+    // Validar que la empresa exista.
+    abort_unless(
+        $companyId > 0 &&
+        Company::query()->whereKey($companyId)->exists(),
+        404
+    );
+
+    // Impedir modificar conexiones de otra empresa.
+    // El administrador general temporal puede gestionarlas.
+    if ($user->company_id !== null) {
+        abort_unless(
+            (int) $user->company_id === $companyId,
+            403
+        );
     }
+
+    // Guardar solamente las conexiones autorizadas.
+    $this->saveChannel(
+        $companyId,
+        'telegram',
+        $state['telegram'] ?? []
+    );
+
+    $this->saveChannel(
+        $companyId,
+        'email',
+        $state['email'] ?? []
+    );
+
+    $this->saveChannel(
+        $companyId,
+        'whatsapp',
+        $state['whatsapp'] ?? []
+    );
+
+    Notification::make()
+        ->success()
+        ->title('Conexiones guardadas')
+        ->body('La configuración fue actualizada.')
+        ->send();
+
+    $this->fillConnectionData();
+}
+
 
     /**
      * Campos necesarios para configurar Telegram Bot API.
@@ -266,17 +330,63 @@ class ConnectionSettings extends Page
     /**
      * Llena el formulario con los registros existentes de la empresa.
      */
-    private function fillConnectionData(): void
-    {
-        $companyId = $this->data['company_id'] ?? null;
 
-        $this->form->fill([
-            'company_id' => $companyId,
-            'telegram' => $this->channelData($companyId, 'telegram', 'Telegram'),
-            'email' => $this->channelData($companyId, 'email', 'Email SMTP'),
-            'whatsapp' => $this->channelData($companyId, 'whatsapp', 'WhatsApp Evolution API'),
-        ]);
+private function fillConnectionData(): void
+{
+    $user = auth()->user();
+
+    // Solo administradores autorizados.
+    abort_unless(
+        $user && $user->is_admin,
+        403
+    );
+
+    // Para administradores de empresa, usar
+    // siempre la empresa de su sesión.
+    if ($user->company_id !== null) {
+        $companyId = (int) $user->company_id;
+    } else {
+        // Administrador general temporal.
+        $companyId = $this->data['company_id'] ?? null;
     }
+
+    $companyId = $companyId
+        ? (int) $companyId
+        : null;
+
+    // Verificar que la empresa exista.
+    if ($companyId !== null) {
+        abort_unless(
+            Company::query()
+                ->whereKey($companyId)
+                ->exists(),
+            404
+        );
+    }
+
+    // Restablecer la empresa autorizada.
+    $this->data['company_id'] = $companyId;
+
+    // Cargar únicamente sus conexiones.
+    $this->form->fill([
+        'company_id' => $companyId,
+        'telegram' => $this->channelData(
+            $companyId,
+            'telegram',
+            'Telegram'
+        ),
+        'email' => $this->channelData(
+            $companyId,
+            'email',
+            'Email SMTP'
+        ),
+        'whatsapp' => $this->channelData(
+            $companyId,
+            'whatsapp',
+            'WhatsApp Evolution API'
+        ),
+    ]);
+}
 
     /**
      * Convierte un registro de conexion en estado de formulario.

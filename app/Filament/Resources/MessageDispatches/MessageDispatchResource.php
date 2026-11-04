@@ -12,6 +12,7 @@ use Filament\Resources\Resource;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Table;
+use Illuminate\Database\Eloquent\Builder;
 use UnitEnum;
 
 class MessageDispatchResource extends Resource
@@ -34,6 +35,34 @@ class MessageDispatchResource extends Resource
     public static function table(Table $table): Table
     {
         return MessageDispatchesTable::configure($table);
+    }
+
+    /**
+     * US-03: Mostrar solamente los envios
+     * pertenecientes a la empresa autenticada.
+     */
+    public static function getEloquentQuery(): Builder
+    {
+        $query = parent::getEloquentQuery();
+
+        // Obtener el usuario autenticado.
+        $user = auth()->user();
+
+        // Bloquear usuarios no autorizados.
+        if (! $user || ! $user->is_admin) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        // Administrador general temporal.
+        if ($user->company_id === null) {
+            return $query;
+        }
+
+        // Filtrar por la empresa del usuario.
+        return $query->where(
+            'company_id',
+            $user->company_id
+        );
     }
 
     public static function getRelations(): array
