@@ -106,3 +106,57 @@ it('no modifica conexiones de otra empresa', function () {
     expect($conexionB->fresh()->name)
         ->toBe('Telegram Original Empresa B');
 });
+
+
+it('rechaza guardar conexiones de otra empresa', function () {
+
+    $empresaA = Company::create([
+        'name' => 'Empresa Protegida A',
+    ]);
+
+    $empresaB = Company::create([
+        'name' => 'Empresa Protegida B',
+    ]);
+
+    $adminA = User::create([
+        'company_id' => $empresaA->id,
+        'name' => 'Administrador Protegido A',
+        'email' => 'protegido-a@example.com',
+        'password' => 'password-test-local',
+        'is_admin' => true,
+    ]);
+
+    $conexionB = CommunicationConnection::create([
+        'company_id' => $empresaB->id,
+        'channel' => 'telegram',
+        'name' => 'Telegram Original B',
+        'is_enabled' => false,
+    ]);
+
+    // Simular la manipulacion del estado
+    // completo del formulario.
+    Livewire::actingAs($adminA)
+        ->test(ConnectionSettings::class)
+        ->set('data', [
+            'company_id' => $empresaB->id,
+            'telegram' => [
+                'name' => 'Cambio no autorizado',
+                'is_enabled' => false,
+            ],
+            'email' => [
+                'name' => 'Email SMTP',
+                'is_enabled' => false,
+            ],
+            'whatsapp' => [
+                'name' => 'WhatsApp',
+                'is_enabled' => false,
+            ],
+        ])
+        ->call('save')
+        ->assertForbidden();
+
+    // La configuracion de B debe seguir intacta.
+    expect($conexionB->fresh()->name)
+        ->toBe('Telegram Original B');
+});
+

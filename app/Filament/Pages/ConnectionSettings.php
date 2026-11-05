@@ -136,13 +136,22 @@ class ConnectionSettings extends Page
 
 public function save(): void
 {
-    // Identificar al administrador autenticado.
     $user = auth()->user();
 
     abort_unless(
         $user && $user->is_admin,
         403
     );
+
+    // Rechazar una empresa manipulada.
+    if ($user->company_id !== null) {
+        abort_unless(
+            (int) ($this->data['company_id'] ?? 0)
+                === (int) $user->company_id,
+            403
+        );
+    }
+
 
     // Obtener los datos del formulario.
     $state = $this->form->getState();
