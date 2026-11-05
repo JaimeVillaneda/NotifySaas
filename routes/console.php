@@ -29,3 +29,18 @@ Schedule::command('reminders:process')
 Schedule::command('messages:send')
     ->everyMinute()
     ->withoutOverlapping(10);
+
+    
+/**
+ * PASO 3:
+ * Detectar mensajes que quedaron interrumpidos.
+ *
+ * Se revisan cada 5 minutos.
+ * El comando solo marca para revision los mensajes
+ * que llevan mas de 30 minutos en processing.
+ *
+ * No reenvia mensajes automaticamente.
+ */
+Schedule::command('messages:recover')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(10);

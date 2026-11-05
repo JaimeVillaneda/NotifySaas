@@ -8,41 +8,55 @@ use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 
 #[Signature('reminders:process')]
-#[Description('Process pending message reminders and create dispatch records.')]
+#[Description('Process scheduled reminders and generate dispatch records.')]
 class ProcessPendingReminders extends Command
 {
-    /**
-     * Busca recordatorios pendientes y genera
-     * registros de envio para los clientes.
-     *
-     * US-03: Garantizar el aislamiento entre empresas.
-     *
-     * IMPORTANTE:
-     * Este comando todavia NO envia mensajes reales.
-     * Los registros quedan en estado pending para
-     * que posteriormente sean enviados por Telegram,
-     * SMTP o Evolution API.
-     */
-    public function handle(): int
-    {
-        // Obtener la fecha y hora actual.
-        $now = now();
 
-        // Contador de registros de envio generados.
+public function handle(): int
+{
+    // Bloquear ejecuciones simultaneas.
+    // El bloqueo caduca como maximo en 10 minutos.
+    $lock = Cache::lock(
+        'notifysaas:reminders:process',
+        600
+    );
+
+    // Si otra ejecucion tiene el bloqueo,
+    // no volver a procesar los recordatorios.
+    if (! $lock->get()) {
+        $this->warn(
+            'Ya existe un procesamiento de recordatorios en curso.'
+        );
+
+        return self::SUCCESS;
+    }
+
+    try {
+        // Ejecutar el procesamiento protegido.
+        return $this->processReminders();
+
+    } finally {
+        // Liberar el bloqueo incluso si ocurre un error.
+        $lock->release();
+    }
+}
+
+/**
+ * Procesamiento de recordatorios.
+ *
+ * Conserva las validaciones de empresas,
+ * clientes, plantillas, fechas y horarios.
+ */
+private function processReminders(): int
+{
+
+        $now = now();
         $processed = 0;
 
-        /**
-         * PASO 1:
-         * Buscar recordatorios que cumplan:
-         *
-         * - Estar activos.
-         * - Tener estado pendiente.
-         * - Pertenecer a una empresa.
-         * - Tener una empresa activa.
-         * - Haber llegado a su fecha de ejecucion.
-         */
+        // Buscar recordatorios pendientes de empresas activas.
         MessageAutomation::query()
             ->with(['template', 'connection'])
             ->where('is_active', true)
@@ -52,208 +66,217 @@ class ProcessPendingReminders extends Command
                 $query->where('is_active', true);
             })
             ->where(function ($query) use ($now) {
-                $query
-                    ->whereNull('next_run_at')
+                $query->whereNull('next_run_at')
                     ->orWhere('next_run_at', '<=', $now);
             })
-            ->chunkById(
-                50,
-                function ($automations) use (&$processed, $now): void {
+            ->chunkById(50, function ($automations) use (
+                &$processed,
+                $now
+            ): void {
 
-                    /**
-                     * PASO 2:
-                     * Recorrer los recordatorios encontrados.
-                     */
-                    foreach ($automations as $automation) {
+                foreach ($automations as $automation) {
 
-                        /**
-                         * PASO 3:
-                         * Validar que la plantilla:
-                         *
-                         * - Exista.
-                         * - Este activa.
-                         * - Pertenezca a la misma empresa.
-                         */
-                        if (
-                            ! $automation->template ||
-                            ! $automation->template->is_active ||
-                            (int) $automation->template->company_id
-                                !== (int) $automation->company_id
-                        ) {
-                            $this->warn(
-                                "Recordatorio {$automation->id} omitido: plantilla no valida."
+                    // 1. No ejecutar antes de la fecha inicial.
+                    if (
+                        $automation->start_date &&
+                        $automation->start_date
+                            ->copy()
+                            ->startOfDay()
+                            ->gt($now)
+                    ) {
+                        continue;
+                    }
+
+                    // 2. Finalizar recordatorios vencidos.
+                    if (
+                        $automation->end_date &&
+                        $automation->end_date
+                            ->copy()
+                            ->endOfDay()
+                            ->lt($now)
+                    ) {
+                        $automation->forceFill([
+                            'status' => 'completed',
+                            'next_run_at' => null,
+                        ])->save();
+
+                        continue;
+                    }
+
+                    // 3. Respetar la hora de envio.
+                    if ($automation->send_time) {
+                        $sendAtToday = $now
+                            ->copy()
+                            ->startOfDay()
+                            ->setTimeFromTimeString(
+                                $automation->send_time
                             );
 
+                        if ($now->lt($sendAtToday)) {
                             continue;
                         }
-
-                        /**
-                         * PASO 4:
-                         * Buscar solamente clientes activos
-                         * de la empresa del recordatorio.
-                         *
-                         * US-03:
-                         * El filtro por empresa es obligatorio.
-                         */
-                        Person::query()
-                            ->where('is_active', true)
-                            ->where(
-                                'company_id',
-                                $automation->company_id
-                            )
-                            ->when(
-                                $automation->person_id,
-                                function ($query) use ($automation) {
-                                    $query->where(
-                                        'id',
-                                        $automation->person_id
-                                    );
-                                }
-                            )
-                            ->chunkById(
-                                100,
-                                function ($people) use (
-                                    $automation,
-                                    &$processed,
-                                    $now
-                                ): void {
-
-                                    /**
-                                     * PASO 5:
-                                     * Crear un registro de envio
-                                     * por cada cliente autorizado.
-                                     */
-                                    foreach ($people as $person) {
-
-                                        $automation->dispatches()->create([
-                                            'company_id' =>
-                                                $automation->company_id,
-
-                                            'message_template_id' =>
-                                                $automation->message_template_id,
-
-                                            'communication_connection_id' =>
-                                                $automation->communication_connection_id,
-
-                                            'person_id' =>
-                                                $person->id,
-
-                                            'phone' =>
-                                                $person->phone,
-
-                                            'channel' =>
-                                                $automation->channel,
-
-                                            'message' =>
-                                                $this->renderMessage(
-                                                    $automation->template->body,
-                                                    $person
-                                                ),
-
-                                            'status' =>
-                                                'pending',
-
-                                            'scheduled_at' =>
-                                                $now,
-                                        ]);
-
-                                        // Aumentar contador.
-                                        $processed++;
-                                    }
-                                }
-                            );
-
-                        /**
-                         * PASO 6:
-                         * Actualizar el recordatorio procesado.
-                         *
-                         * Si es de una sola vez:
-                         * marcar como completado.
-                         *
-                         * Si es recurrente:
-                         * calcular la proxima ejecucion.
-                         */
-                        $automation->forceFill([
-                            'last_run_at' => $now,
-
-                            'next_run_at' => $this->nextRunAt(
-                                $automation,
-                                $now
-                            ),
-
-                            'status' =>
-                                $automation->frequency === 'once'
-                                    ? 'completed'
-                                    : 'pending',
-                        ])->save();
                     }
-                }
-            );
 
-        /**
-         * PASO 7:
-         * Mostrar el numero de envios generados.
-         */
-        $this->info(
-            "Dispatches generated: {$processed}"
-        );
+                    // 4. Verificar plantilla y empresa.
+                    if (
+                        ! $automation->template ||
+                        ! $automation->template->is_active ||
+                        (int) $automation->template->company_id
+                            !== (int) $automation->company_id
+                    ) {
+                        $this->warn(
+                            "Recordatorio {$automation->id}: "
+                            . "plantilla no valida."
+                        );
+
+                        continue;
+                    }
+
+                    // 5. Seleccionar clientes autorizados.
+                    Person::query()
+                        ->where('is_active', true)
+                        ->where(
+                            'company_id',
+                            $automation->company_id
+                        )
+                        ->when(
+                            $automation->person_id,
+                            fn ($query) => $query->where(
+                                'id',
+                                $automation->person_id
+                            )
+                        )
+                        ->chunkById(100, function ($people) use (
+                            $automation,
+                            $now,
+                            &$processed
+                        ): void {
+
+                            foreach ($people as $person) {
+
+                                // Crear el registro pendiente.
+                                $automation->dispatches()->create([
+                                    'company_id' =>
+                                        $automation->company_id,
+
+                                    'message_template_id' =>
+                                        $automation->message_template_id,
+
+                                    'communication_connection_id' =>
+                                        $automation->communication_connection_id,
+
+                                    'person_id' => $person->id,
+                                    'phone' => $person->phone,
+                                    'channel' => $automation->channel,
+
+                                    'message' => $this->renderMessage(
+                                        $automation->template->body,
+                                        $person
+                                    ),
+
+                                    'status' => 'pending',
+                                    'scheduled_at' => $now,
+                                ]);
+
+                                $processed++;
+                            }
+                        });
+
+                    // 6. Calcular proxima ejecucion.
+                    $next = $this->nextRunAt(
+                        $automation,
+                        $now
+                    );
+
+                    // 7. Verificar si el recordatorio termina.
+                    $finished = $automation->frequency === 'once';
+
+                    if (
+                        $automation->end_date &&
+                        $next &&
+                        $next->gt(
+                            $automation->end_date
+                                ->copy()
+                                ->endOfDay()
+                        )
+                    ) {
+                        $finished = true;
+                    }
+
+                    // 8. Actualizar estado y programacion.
+                    $automation->forceFill([
+                        'last_run_at' => $now,
+                        'next_run_at' => $finished
+                            ? null
+                            : $next,
+                        'status' => $finished
+                            ? 'completed'
+                            : 'pending',
+                    ])->save();
+                }
+            });
+
+        $this->info("Dispatches generated: {$processed}");
 
         return self::SUCCESS;
     }
 
     /**
-     * Reemplaza las variables de una plantilla
-     * con la informacion del cliente.
-     *
-     * Variables disponibles:
-     * {{ nombre }}
-     * {{ telefono }}
-     * {{ email }}
+     * Reemplazar variables con datos del cliente.
      */
     private function renderMessage(
         string $template,
         Person $person
     ): string {
         return str($template)
-            ->replace(
-                '{{ nombre }}',
-                $person->full_name
-            )
-            ->replace(
-                '{{ telefono }}',
-                $person->phone
-            )
-            ->replace(
-                '{{ email }}',
-                (string) $person->email
-            )
+            ->replace('{{ nombre }}', $person->full_name)
+            ->replace('{{ telefono }}', $person->phone)
+            ->replace('{{ email }}', (string) $person->email)
             ->toString();
     }
 
     /**
-     * Calcula la proxima ejecucion segun
-     * la frecuencia del recordatorio.
+     * Calcular la proxima ejecucion del recordatorio.
      */
     private function nextRunAt(
         MessageAutomation $automation,
         Carbon $from
     ): ?Carbon {
-        return match ($automation->frequency) {
-
-            // Ejecutar nuevamente al dia siguiente.
+        $next = match ($automation->frequency) {
             'daily' => $from->copy()->addDay(),
 
-            // Ejecutar nuevamente en una semana.
             'weekly' => $from->copy()->addWeek(),
 
-            // Ejecutar segun intervalo configurado.
             'interval' => $from->copy()->add(
-                $automation->interval_unit ?: 'days',
-                $automation->interval_value ?: 1
+                in_array(
+                    $automation->interval_unit,
+                    ['minutes', 'hours', 'days'],
+                    true
+                )
+                    ? $automation->interval_unit
+                    : 'days',
+                max(1, (int) $automation->interval_value)
             ),
 
-            // Una sola ejecucion.
             default => null,
         };
+
+        // Mantener la hora configurada para
+        // recordatorios diarios y semanales.
+        if (
+            $next &&
+            $automation->send_time &&
+            in_array(
+                $automation->frequency,
+                ['daily', 'weekly'],
+                true
+            )
+        ) {
+            $next->setTimeFromTimeString(
+                $automation->send_time
+            );
+        }
+
+        return $next;
     }
 }
