@@ -227,3 +227,100 @@ it('procesa correos exitosos y fallidos', function () {
     expect(MessageDispatch::count())->toBe(2);
 });
 
+
+it('procesa envios exitosos y fallidos de WhatsApp', function () {
+
+    // 1. Empresa de prueba.
+    $empresa = Company::create([
+        'name' => 'Empresa WhatsApp Procesador',
+        'is_active' => true,
+    ]);
+
+    // 2. Conexion ficticia de Evolution API.
+    $conexion = CommunicationConnection::create([
+        'company_id' => $empresa->id,
+        'name' => 'WhatsApp Simulado',
+        'channel' => 'whatsapp',
+        'is_enabled' => true,
+        'base_url' => 'http://127.0.0.1:8080',
+        'instance_name' => 'notifysaas',
+        'secret' => 'CLAVE-SIMULADA',
+    ]);
+
+    // 3. Cliente de prueba.
+    $cliente = Person::create([
+        'company_id' => $empresa->id,
+        'first_name' => 'Cliente',
+        'last_name' => 'WhatsApp',
+        'phone' => '3001234567',
+        'is_active' => true,
+    ]);
+
+    // 4. Dos mensajes pendientes.
+    $exitoso = MessageDispatch::create([
+        'company_id' => $empresa->id,
+        'person_id' => $cliente->id,
+        'communication_connection_id' => $conexion->id,
+        'phone' => $cliente->phone,
+        'channel' => 'whatsapp',
+        'message' => 'WhatsApp exitoso',
+        'status' => 'pending',
+        'attempts' => 0,
+        'scheduled_at' => now()->subMinute(),
+    ]);
+
+    $fallido = MessageDispatch::create([
+        'company_id' => $empresa->id,
+        'person_id' => $cliente->id,
+        'communication_connection_id' => $conexion->id,
+        'phone' => $cliente->phone,
+        'channel' => 'whatsapp',
+        'message' => 'WhatsApp fallido',
+        'status' => 'pending',
+        'attempts' => 0,
+        'scheduled_at' => now()->subMinute(),
+    ]);
+
+    // 5. Simular respuestas de Evolution API.
+    // No se realizaran llamadas reales.
+    Http::preventStrayRequests();
+
+    Http::fake(function (Request $request) {
+
+        if ($request['text'] === 'WhatsApp exitoso') {
+            return Http::response([
+                'key' => [
+                    'id' => 'WA-TEST-001',
+                ],
+            ], 201);
+        }
+
+        return Http::response([
+            'message' => 'Error simulado',
+        ], 400);
+    });
+
+    // 6. Ejecutar el comando dentro del entorno de prueba.
+    $resultado = Artisan::call('messages:send');
+
+    expect($resultado)->toBe(0);
+
+    // 7. Comprobar envio exitoso.
+    $exitoso->refresh();
+
+    expect($exitoso->status)->toBe('sent');
+    expect($exitoso->attempts)->toBe(1);
+    expect($exitoso->sent_at)->not->toBeNull();
+    expect($exitoso->response)->toContain('WA-TEST-001');
+
+    // 8. Comprobar envio fallido.
+    $fallido->refresh();
+
+    expect($fallido->status)->toBe('failed');
+    expect($fallido->attempts)->toBe(1);
+    expect($fallido->sent_at)->toBeNull();
+    expect($fallido->error)->not->toBeNull();
+
+    // 9. Ambas solicitudes fueron simuladas.
+    Http::assertSentCount(2);
+});

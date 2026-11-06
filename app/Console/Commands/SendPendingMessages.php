@@ -3,8 +3,9 @@
 namespace App\Console\Commands;
 
 use App\Models\MessageDispatch;
-use App\Services\TelegramDeliveryService;
 use App\Services\EmailDeliveryService;
+use App\Services\TelegramDeliveryService;
+use App\Services\WhatsAppDeliveryService;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
@@ -12,17 +13,21 @@ use Illuminate\Support\Facades\DB;
 use Throwable;
 
 #[Signature('messages:send')]
-#[Description('Send pending Email and Telegram messages.')]
+#[Description('Send pending Email, Telegram and WhatsApp messages.')]
 class SendPendingMessages extends Command
 {
     /**
-     * Procesa mensajes pendientes de Telegram y Email.
+     * Procesa mensajes pendientes de:
+     * - Telegram
+     * - Email SMTP
+     * - WhatsApp Evolution API
      *
-     * Actualiza el historial con el resultado del envio.
+     * Registra en el historial los resultados.
      */
     public function handle(
         TelegramDeliveryService $telegram,
-        EmailDeliveryService $email
+        EmailDeliveryService $email,
+        WhatsAppDeliveryService $whatsapp
     ): int {
 
         $sent = 0;
@@ -30,14 +35,15 @@ class SendPendingMessages extends Command
 
         /**
          * PASO 1:
-         * Buscar mensajes pendientes de los canales
-         * que actualmente tenemos implementados.
+         * Buscar mensajes pendientes de los
+         * canales que tenemos implementados.
          */
         MessageDispatch::query()
             ->where('status', 'pending')
             ->whereIn('channel', [
                 'telegram',
                 'email',
+                'whatsapp',
             ])
             ->whereNotNull('company_id')
             ->whereHas('company', function ($query) {
@@ -53,6 +59,7 @@ class SendPendingMessages extends Command
                 function ($dispatches) use (
                     $telegram,
                     $email,
+                    $whatsapp,
                     &$sent,
                     &$failed
                 ): void {
@@ -62,6 +69,9 @@ class SendPendingMessages extends Command
                         /**
                          * PASO 2:
                          * Reclamar el mensaje antes de enviarlo.
+                         *
+                         * Evita que dos procesos reclamen
+                         * simultaneamente el mismo registro.
                          */
                         $claimed = MessageDispatch::query()
                             ->whereKey($dispatch->id)
@@ -73,7 +83,7 @@ class SendPendingMessages extends Command
                                 ),
                             ]);
 
-                        // Otro proceso ya lo reclamo.
+                        // Otro proceso ya reclamo el mensaje.
                         if ($claimed !== 1) {
                             continue;
                         }
@@ -84,9 +94,11 @@ class SendPendingMessages extends Command
 
                             /**
                              * PASO 3:
-                             * Seleccionar el servicio segun
-                             * el canal del mensaje.
+                             * Seleccionar el servicio de envio
+                             * segun el canal del mensaje.
                              */
+
+                            // CANAL 1: TELEGRAM
                             if ($dispatch->channel === 'telegram') {
 
                                 $messageId = $telegram->send(
@@ -96,6 +108,7 @@ class SendPendingMessages extends Command
                                 $response = 'Telegram message ID: '
                                     . $messageId;
 
+                            // CANAL 2: EMAIL SMTP
                             } elseif ($dispatch->channel === 'email') {
 
                                 $email->send($dispatch);
@@ -103,6 +116,17 @@ class SendPendingMessages extends Command
                                 $response = 'Mensaje aceptado '
                                     . 'por el servidor SMTP.';
 
+                            // CANAL 3: WHATSAPP EVOLUTION API
+                            } elseif ($dispatch->channel === 'whatsapp') {
+
+                                $messageId = $whatsapp->send(
+                                    $dispatch
+                                );
+
+                                $response = 'WhatsApp Evolution API message ID: '
+                                    . $messageId;
+
+                            // CANAL NO SOPORTADO
                             } else {
 
                                 throw new \RuntimeException(
@@ -132,9 +156,10 @@ class SendPendingMessages extends Command
 
                             /**
                              * PASO 5:
-                             * Registrar el error.
+                             * Registrar el envio fallido.
                              *
-                             * No interrumpir los demas envios.
+                             * No interrumpir el procesamiento
+                             * de los demas mensajes.
                              */
                             $dispatch->forceFill([
                                 'status' => 'failed',
@@ -161,7 +186,7 @@ class SendPendingMessages extends Command
 
         /**
          * PASO 6:
-         * Mostrar resumen de resultados.
+         * Mostrar el resumen del procesamiento.
          */
         $this->info("Enviados: {$sent}");
         $this->info("Fallidos: {$failed}");
