@@ -29,11 +29,21 @@ Select::make('company_id')
                 TextInput::make('last_name')
                     ->label('Apellido')
                     ->maxLength(255),
-                TextInput::make('phone')
-                    ->label('Telefono WhatsApp')
-                    ->tel()
-                    ->maxLength(40)
-                    ->required(),
+                
+TextInput::make('phone')
+    ->label('Telefono WhatsApp')
+    ->tel()
+    ->maxLength(40)
+    ->required()
+    ->unique(
+        table: 'people',
+        column: 'phone',
+        ignoreRecord: true
+    )
+    ->validationMessages([
+        'unique' => 'Este número de teléfono ya está registrado. Ingresa uno diferente.',
+    ]),
+
                 TextInput::make('email')
                     ->label('Correo')
                     ->email()
