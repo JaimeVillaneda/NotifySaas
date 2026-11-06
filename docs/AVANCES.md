@@ -31,3 +31,28 @@
 - Telegram: mensaje real recibido.
 - Gmail: correo real recibido en bandeja de entrada.
 - Laravel: pruebas automatizadas aprobadas.
+
+## Avances - 6 de noviembre de 2026
+
+### Integraciones completadas
+
+- Telegram: envio real confirmado.
+- Telegram: envio automatico mediante Laravel Scheduler.
+- Gmail SMTP: envio real confirmado y correo recibido.
+- Gmail SMTP: envio automatico confirmado.
+- Historial de envios actualizado correctamente.
+- Recordatorios de una sola ejecucion marcados como completados.
+
+### Pruebas y seguridad
+
+- 19 pruebas automatizadas aprobadas.
+- 110 aserciones exitosas.
+- Composer audit sin vulnerabilidades conocidas.
+- Dependencias de seguridad actualizadas.
+
+### Pendiente
+
+- Instalar Evolution API mediante Docker.
+- Configurar una instancia de WhatsApp.
+- Integrar el envio real de WhatsApp con NotifySaaS.
+- Realizar las pruebas finales del sistema.
